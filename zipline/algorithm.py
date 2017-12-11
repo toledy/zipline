@@ -86,6 +86,7 @@ from zipline.finance.asset_restrictions import (
     StaticRestrictions,
     SecurityListRestrictions,
 )
+from zipline.finance.slippage import FixedBasisPointsSlippage
 from zipline.assets import Asset, Equity, Future
 from zipline.gens.tradesimulation import AlgorithmSimulator
 from zipline.pipeline import Pipeline
@@ -320,6 +321,7 @@ class TradingAlgorithm(object):
         if not self.blotter:
             self.blotter = Blotter(
                 data_frequency=self.data_frequency,
+                equity_slippage=FixedBasisPointsSlippage(),
                 # Default to NeverCancel in zipline
                 cancel_policy=self.cancel_policy,
             )
