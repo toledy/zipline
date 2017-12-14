@@ -78,6 +78,7 @@ def run_example(example_name, environ):
         analyze=getattr(mod, 'analyze', None),
         bundle='test',
         environ=environ,
+        # example test data use the VolumeShareSlippage model
         equity_slippage=VolumeShareSlippage(),
         # Provide a default capital base, but allow the test to override.
         **merge({'capital_base': 1e7}, mod._test_args())
