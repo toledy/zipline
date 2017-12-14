@@ -64,7 +64,9 @@ def _run(handle_data,
          trading_calendar,
          print_algo,
          local_namespace,
-         environ):
+         environ,
+         equity_slippage,
+         future_slippage):
     """Run a backtest for the given algorithm.
 
     This is shared between the cli and :func:`zipline.run_algo`.
@@ -165,6 +167,8 @@ def _run(handle_data,
         env=env,
         get_pipeline_loader=choose_loader,
         trading_calendar=trading_calendar,
+        equity_slippage=equity_slippage,
+        future_slippage=future_slippage,
         sim_params=create_simulation_parameters(
             start=start,
             end=end,
@@ -262,7 +266,9 @@ def run_algorithm(start,
                   default_extension=True,
                   extensions=(),
                   strict_extensions=True,
-                  environ=os.environ):
+                  environ=os.environ,
+                  equity_slippage=None,
+                  future_slippage=None):
     """Run a trading algorithm.
 
     Parameters
@@ -318,6 +324,10 @@ def run_algorithm(start,
     environ : mapping[str -> str], optional
         The os environment to use. Many extensions use this to get parameters.
         This defaults to ``os.environ``.
+    equity_slippage : SlippageModel, optional
+        slippage model to use for equities, if None will use blotter default
+    future_slippage : SlippageModel, optional
+        slippage model to use for futures, if None will use blotter default
 
     Returns
     -------
@@ -369,4 +379,6 @@ def run_algorithm(start,
         print_algo=False,
         local_namespace=False,
         environ=environ,
+        equity_slippage=equity_slippage,
+        future_slippage=future_slippage,
     )

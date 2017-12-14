@@ -86,7 +86,6 @@ from zipline.finance.asset_restrictions import (
     StaticRestrictions,
     SecurityListRestrictions,
 )
-from zipline.finance.slippage import FixedBasisPointsSlippage
 from zipline.assets import Asset, Equity, Future
 from zipline.gens.tradesimulation import AlgorithmSimulator
 from zipline.pipeline import Pipeline
@@ -250,6 +249,12 @@ class TradingAlgorithm(object):
             identifiers : List
                 Any asset identifiers that are not provided in the
                 equities_metadata, but will be traded by this TradingAlgorithm
+            equity_slippage : SlippageModel
+                Slippage model for equities to use in Blotter, if not specified
+                the Blotter's default equity slippage model will be used.
+            future_slippage : SlippageModel
+                Slippage model for futures to use in Blotter, if not specified
+                the Blotter's default future slippage model will be used.
         """
         self.sources = []
 
@@ -321,7 +326,8 @@ class TradingAlgorithm(object):
         if not self.blotter:
             self.blotter = Blotter(
                 data_frequency=self.data_frequency,
-                equity_slippage=FixedBasisPointsSlippage(),
+                equity_slippage=kwargs.pop('equity_slippage', None),
+                future_slippage=kwargs.pop('future_slippage', None),
                 # Default to NeverCancel in zipline
                 cancel_policy=self.cancel_policy,
             )
