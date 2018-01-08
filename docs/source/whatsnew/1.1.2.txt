@@ -4,10 +4,6 @@ Development
 :Release: 1.1.2
 :Date: TBD
 
-.. warning::
-   This release is still under active development.  All changes listed are
-   subject to change at any time.
-
 
 Highlights
 ~~~~~~~~~~
@@ -17,7 +13,7 @@ None
 Enhancements
 ~~~~~~~~~~~~
 
-None
+- Sets the default bundle to use ``quandl`` and uses the latest Quandl API. (:issue: ``)
 
 Experimental Features
 ~~~~~~~~~~~~~~~~~~~~~
@@ -41,7 +37,11 @@ Performance
 Maintenance and Refactorings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-None
+- Fills treasury data through the latest close price. (:issue: ``)
+- Sets ``RollingLinearRegressionOfReturns`` factor to be window_safe. (:issue: ``)
+- Sets ``RSI`` factor to be window_safe. (:issue: ``)
+- Adds some updates for better docs generation. (:issue:`1890`)
+- Removes and zeroes out unused treasury curves. (:issue:`1910`)
 
 Build
 ~~~~~
@@ -51,7 +51,13 @@ None
 Documentation
 ~~~~~~~~~~~~~
 
-None
+- Adds a tutorial on how to create a custom ``TradingCalendar``. (:issue:``)
+- Adds a tutorial on how to create a custom bundle from ``.csv`` files. (:issue:``)
+- Updates the README, Beginner Tutorial, and Jupyter Notebook to use the ``quandl`` bundle as the default, and links to how to get an API key from Quandl. (:issue: ``)
+- Removes mentions of Yahoo Finance from the tutorial. (:issue: #1845)
+- Includes MACDSignal in the docs. (:issue: ``)
+- Adds a "Contributing" section to the README. (:issue: ``)
+- 
 
 Miscellaneous
 ~~~~~~~~~~~~~
