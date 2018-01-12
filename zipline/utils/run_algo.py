@@ -136,6 +136,7 @@ def _run(handle_data,
         env = TradingEnvironment(asset_db_path=connstr, environ=environ)
         first_trading_day =\
             bundle_data.equity_minute_bar_reader.first_trading_day
+
         data = DataPortal(
             env.asset_finder,
             trading_calendar=trading_calendar,
@@ -144,6 +145,9 @@ def _run(handle_data,
             equity_daily_reader=bundle_data.equity_daily_bar_reader,
             adjustment_reader=bundle_data.adjustment_reader,
         )
+
+        default_benchmark_sid =\
+            bundle_data.metadata_reader.get_default_benchmark_sid()
 
         pipeline_loader = USEquityPricingLoader(
             bundle_data.equity_daily_bar_reader,
@@ -165,6 +169,7 @@ def _run(handle_data,
         env=env,
         get_pipeline_loader=choose_loader,
         trading_calendar=trading_calendar,
+        benchmark_sid=default_benchmark_sid,
         sim_params=create_simulation_parameters(
             start=start,
             end=end,
