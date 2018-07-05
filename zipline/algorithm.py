@@ -34,6 +34,8 @@ from six import (
     string_types,
     viewkeys,
 )
+from trading_calendars.utils.pandas_utils import days_at_time
+from trading_calendars import get_calendar
 
 from zipline._protocol import handle_non_market_minutes
 from zipline.assets.synthetic import make_simple_equity_info
@@ -61,6 +63,7 @@ from zipline.errors import (
     UnsupportedCancelPolicy,
     UnsupportedDatetimeFormat,
     UnsupportedOrderParameters,
+    ZeroCapitalError
 )
 from zipline.finance.trading import TradingEnvironment
 from zipline.finance.blotter import Blotter
@@ -109,9 +112,7 @@ from zipline.utils.input_validation import (
     optional,
 )
 from zipline.utils.numpy_utils import int64_dtype
-from zipline.utils.calendars.trading_calendar import days_at_time
 from zipline.utils.cache import ExpiringCache
-from zipline.utils.calendars import get_calendar
 from zipline.utils.pandas_utils import clear_dataframe_indexer_caches
 
 import zipline.utils.events
@@ -409,6 +410,10 @@ class TradingAlgorithm(object):
         if 'data_frequency' in kwargs:
             self.data_frequency = kwargs.pop('data_frequency')
 
+        capital_base = self.sim_params.capital_base
+        if capital_base <= 0:
+            raise ZeroCapitalError()
+
         # Prepare the algo for initialization
         self.initialized = False
         self.initialize_args = args
@@ -627,9 +632,23 @@ class TradingAlgorithm(object):
               Daily performance metrics such as returns, alpha etc.
 
         """
+        # XXX: _assets_from_source is a backwards compatibility shim for old,
+        #      deprecated APIs that treat BarData like a dictionary with asset
+        #      keys. We initialize it differently depending on what kind of
+        #      data we're running against. This is kind of a mess...
         self._assets_from_source = []
 
-        if isinstance(data, DataPortal):
+        if data is None:
+            if self.data_portal is None:
+                raise ValueError(
+                    "Must pass a data portal to TradingAlgorithm() "
+                    "or to run()."
+                )
+            self._assets_from_source = self.asset_finder.retrieve_all(
+                self.asset_finder.sids
+            )
+
+        elif isinstance(data, DataPortal):
             self.data_portal = data
 
             # define the universe as all the assets in the assetfinder

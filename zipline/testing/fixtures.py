@@ -5,10 +5,14 @@ import warnings
 
 from contextlib2 import ExitStack
 from logbook import NullHandler, Logger
-from six import with_metaclass, iteritems
-from toolz import flip, merge
 import pandas as pd
+from six import with_metaclass, iteritems
 import responses
+from toolz import flip, merge
+from trading_calendars import (
+    get_calendar,
+    register_calendar,
+)
 
 import zipline
 from zipline.algorithm import TradingAlgorithm
@@ -19,10 +23,6 @@ from zipline.pipeline.data import USEquityPricing
 from zipline.pipeline.loaders import USEquityPricingLoader
 from zipline.pipeline.loaders.testing import make_seeded_random_loader
 from zipline.protocol import BarData
-from zipline.utils.calendars import (
-    get_calendar,
-    register_calendar,
-)
 from zipline.utils.paths import ensure_directory
 from .core import (
     create_daily_bar_data,
@@ -56,8 +56,7 @@ from ..data.us_equity_pricing import (
     SQLiteAdjustmentReader,
     SQLiteAdjustmentWriter,
 )
-from ..finance.trading import TradingEnvironment
-from ..utils import factory
+from ..finance.trading import SimulationParameters, TradingEnvironment
 from ..utils.classproperty import classproperty
 from ..utils.final import FinalMeta, final
 
@@ -569,32 +568,30 @@ class WithSimParams(WithTradingEnvironment):
     """
     ZiplineTestCase mixin providing cls.sim_params as a class level fixture.
 
-    The arguments used to construct the trading environment may be overridded
-    by putting ``SIM_PARAMS_{argname}`` in the class dict except for the
-    trading environment which is overridden with the mechanisms provided by
-    ``WithTradingEnvironment``.
-
     Attributes
     ----------
-    SIM_PARAMS_YEAR : int
     SIM_PARAMS_CAPITAL_BASE : float
-    SIM_PARAMS_NUM_DAYS : int
     SIM_PARAMS_DATA_FREQUENCY : {'daily', 'minute'}
     SIM_PARAMS_EMISSION_RATE : {'daily', 'minute'}
-        Forwarded to ``factory.create_simulation_parameters``.
+        Forwarded to ``SimulationParameters``.
 
     SIM_PARAMS_START : datetime
     SIM_PARAMS_END : datetime
-        Forwarded to ``factory.create_simulation_parameters``. If not
+        Forwarded to ``SimulationParameters``. If not
         explicitly overridden these will be ``START_DATE`` and ``END_DATE``
+
+    Methods
+    -------
+    make_simparams(**overrides)
+        Construct a ``SimulationParameters`` using the defaults defined by
+        fixture configuration attributes. Any parameters to
+        ``SimulationParameters`` can be overridden by passing them by keyword.
 
     See Also
     --------
-    zipline.utils.factory.create_simulation_parameters
+    zipline.finance.trading.SimulationParameters
     """
-    SIM_PARAMS_YEAR = None
     SIM_PARAMS_CAPITAL_BASE = 1.0e5
-    SIM_PARAMS_NUM_DAYS = None
     SIM_PARAMS_DATA_FREQUENCY = 'daily'
     SIM_PARAMS_EMISSION_RATE = 'daily'
 
@@ -602,17 +599,17 @@ class WithSimParams(WithTradingEnvironment):
     SIM_PARAMS_END = alias('END_DATE')
 
     @classmethod
-    def make_simparams(cls):
-        return factory.create_simulation_parameters(
-            year=cls.SIM_PARAMS_YEAR,
-            start=cls.SIM_PARAMS_START,
-            end=cls.SIM_PARAMS_END,
-            num_days=cls.SIM_PARAMS_NUM_DAYS,
+    def make_simparams(cls, **overrides):
+        kwargs = dict(
+            start_session=cls.SIM_PARAMS_START,
+            end_session=cls.SIM_PARAMS_END,
             capital_base=cls.SIM_PARAMS_CAPITAL_BASE,
             data_frequency=cls.SIM_PARAMS_DATA_FREQUENCY,
             emission_rate=cls.SIM_PARAMS_EMISSION_RATE,
             trading_calendar=cls.trading_calendar,
         )
+        kwargs.update(overrides)
+        return SimulationParameters(**kwargs)
 
     @classmethod
     def init_class_fixtures(cls):
@@ -1806,6 +1803,7 @@ class WithMakeAlgo(WithSimParams,
     START_DATE = pd.Timestamp('2014-12-29', tz='UTC')
     END_DATE = pd.Timestamp('2015-1-05', tz='UTC')
     SIM_PARAMS_DATA_FREQUENCY = 'minute'
+    DEFAULT_ALGORITHM_CLASS = TradingAlgorithm
 
     @classproperty
     def BENCHMARK_SID(cls):
@@ -1827,8 +1825,10 @@ class WithMakeAlgo(WithSimParams,
             overrides,
         )
 
-    def make_algo(self, **overrides):
-        return TradingAlgorithm(**self.make_algo_kwargs(**overrides))
+    def make_algo(self, algo_class=None, **overrides):
+        if algo_class is None:
+            algo_class = self.DEFAULT_ALGORITHM_CLASS
+        return algo_class(**self.make_algo_kwargs(**overrides))
 
     def run_algorithm(self, **overrides):
         """

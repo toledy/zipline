@@ -25,6 +25,7 @@ from six.moves import filter, map
 from sqlalchemy import create_engine
 from testfixtures import TempDirectory
 from toolz import concat, curry
+from trading_calendars import get_calendar
 
 from zipline.assets import AssetFinder, AssetDBWriter
 from zipline.assets.synthetic import make_simple_equity_info
@@ -50,7 +51,6 @@ from zipline.pipeline.engine import SimplePipelineEngine
 from zipline.pipeline.factors import CustomFactor
 from zipline.pipeline.loaders.testing import make_seeded_random_loader
 from zipline.utils import security_list
-from zipline.utils.calendars import get_calendar
 from zipline.utils.input_validation import expect_dimensions
 from zipline.utils.numpy_utils import as_column, isnat
 from zipline.utils.pandas_utils import timedelta_to_integral_seconds
@@ -301,9 +301,7 @@ def make_trade_data_for_asset_info(dates,
                                    price_step_by_sid,
                                    volume_start,
                                    volume_step_by_date,
-                                   volume_step_by_sid,
-                                   frequency,
-                                   writer=None):
+                                   volume_step_by_sid):
     """
     Convert the asset info dataframe into a dataframe of trade data for each
     sid, and write to the writer if provided. Write NaNs for locations where
@@ -340,10 +338,6 @@ def make_trade_data_for_asset_info(dates,
             },
             index=dates,
         )
-
-        if writer:
-            writer.write_sid(sid, df)
-
         trade_data[sid] = df
 
     return trade_data
