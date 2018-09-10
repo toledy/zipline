@@ -1,18 +1,22 @@
 """
 Tests BoundColumn attributes and methods.
 """
+from unittest import skipIf
+
 from pandas import Timestamp, DataFrame
 from pandas.util.testing import assert_frame_equal
 
 from zipline.lib.labelarray import LabelArray
 from zipline.pipeline import Pipeline
 from zipline.pipeline.data.testing import TestingDataSet as TDS
+from zipline.pipeline.domain import US_EQUITIES
 from zipline.testing.fixtures import (
     WithSeededRandomPipelineEngine,
     WithTradingSessions,
     ZiplineTestCase
 )
-from zipline.utils.pandas_utils import ignore_pandas_nan_categorical_warning
+from zipline.utils.pandas_utils import ignore_pandas_nan_categorical_warning, \
+    new_pandas, skip_pipeline_new_pandas
 
 
 class LatestTestCase(WithSeededRandomPipelineEngine,
@@ -23,6 +27,8 @@ class LatestTestCase(WithSeededRandomPipelineEngine,
     END_DATE = Timestamp('2015-12-31')
     SEEDED_RANDOM_PIPELINE_SEED = 100
     ASSET_FINDER_EQUITY_SIDS = list(range(5))
+    ASSET_FINDER_COUNTRY_CODE = 'US'
+    SEEDED_RANDOM_PIPELINE_DEFAULT_DOMAIN = US_EQUITIES
 
     @classmethod
     def init_class_fixtures(cls):
@@ -33,8 +39,7 @@ class LatestTestCase(WithSeededRandomPipelineEngine,
             cls.ASSET_FINDER_EQUITY_SIDS)
 
     def expected_latest(self, column, slice_):
-        loader = self.engine.get_loader(column)
-
+        loader = self.seeded_random_loader
         index = self.trading_days[slice_]
         columns = self.assets
         values = loader.values(column.dtype, self.trading_days, self.sids)[
@@ -56,6 +61,7 @@ class LatestTestCase(WithSeededRandomPipelineEngine,
             columns=self.assets,
         )
 
+    @skipIf(new_pandas, skip_pipeline_new_pandas)
     def test_latest(self):
         columns = TDS.columns
         pipe = Pipeline(

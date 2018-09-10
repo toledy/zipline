@@ -31,11 +31,10 @@ from pandas import (
 from pandas.util.testing import assert_index_equal
 from trading_calendars import get_calendar
 
-from zipline.data.us_equity_pricing import (
+from zipline.data.bar_reader import NoDataBeforeDate, NoDataAfterDate
+from zipline.data.bcolz_daily_bars import (
     BcolzDailyBarReader,
     BcolzDailyBarWriter,
-    NoDataBeforeDate,
-    NoDataAfterDate,
 )
 from zipline.pipeline.loaders.synthetic import (
     OHLCV,
@@ -82,6 +81,7 @@ EQUITY_INFO = DataFrame(
     columns=['start_date', 'end_date'],
 ).astype(datetime64)
 EQUITY_INFO['symbol'] = [chr(ord('A') + n) for n in range(len(EQUITY_INFO))]
+EQUITY_INFO['exchange'] = 'TEST'
 
 TEST_QUERY_ASSETS = EQUITY_INFO.index
 

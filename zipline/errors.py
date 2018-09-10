@@ -352,7 +352,8 @@ class MultipleValuesFoundForField(ZiplineError):
     """
     msg = """
 Multiple occurrences of the value '{value}' found for field '{field}'.
-Use the as_of_date' argument to specify when the lookup should be valid.
+Use the 'as_of_date' or 'country_code' argument to specify when or where the
+lookup should be valid.
 
 Possible options: {options}
     """.strip()
@@ -517,6 +518,26 @@ class TermInputsNotSpecified(ZiplineError):
     that term does not have class-level default inputs.
     """
     msg = "{termname} requires inputs, but no inputs list was passed."
+
+
+class NonPipelineInputs(ZiplineError):
+    """
+    Raised when a non-pipeline object is passed as input to a ComputableTerm
+    """
+    def __init__(self, term, inputs):
+        self.term = term
+        self.inputs = inputs
+
+    def __str__(self):
+        return (
+            "Unexpected input types in {}. "
+            "Inputs to Pipeline expressions must be Filters, Factors, "
+            "Classifiers, or BoundColumns.\n"
+            "Got the following type(s) instead: {}".format(
+                type(self.term).__name__,
+                sorted(set(map(type, self.inputs)), key=lambda t: t.__name__),
+            )
+        )
 
 
 class TermOutputsEmpty(ZiplineError):

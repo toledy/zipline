@@ -5,7 +5,7 @@ from numpy import where
 from pandas import Int64Index, Timestamp
 from pandas.util.testing import assert_frame_equal
 
-from zipline.assets import Asset
+from zipline.assets import Asset, ExchangeInfo
 from zipline.errors import (
     NonExistentAssetInTimeFrame,
     NonSliceableTerm,
@@ -15,6 +15,7 @@ from zipline.errors import (
 from zipline.pipeline import CustomFactor, Pipeline
 from zipline.pipeline.data import USEquityPricing
 from zipline.pipeline.data.testing import TestingDataSet
+from zipline.pipeline.domain import US_EQUITIES
 from zipline.pipeline.factors import (
     Returns,
     RollingLinearRegressionOfReturns,
@@ -40,6 +41,8 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
     sids = ASSET_FINDER_EQUITY_SIDS = Int64Index([1, 2, 3])
     START_DATE = Timestamp('2015-01-31', tz='UTC')
     END_DATE = Timestamp('2015-03-01', tz='UTC')
+    ASSET_FINDER_COUNTRY_CODE = 'US'
+    SEEDED_RANDOM_PIPELINE_DEFAULT_DOMAIN = US_EQUITIES
 
     @classmethod
     def init_class_fixtures(cls):
@@ -165,12 +168,15 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
         Test that indexing into a term with a non-existent asset raises the
         proper exception.
         """
-        my_asset = Asset(0, exchange="TEST")
+        my_asset = Asset(
+            0,
+            exchange_info=ExchangeInfo('TEST FULL', 'TEST', 'US'),
+        )
         returns = Returns(window_length=2, inputs=[self.col])
         returns_slice = returns[my_asset]
 
         class UsesSlicedInput(CustomFactor):
-            window_length = 1
+            window_length = 2
             inputs = [returns_slice]
 
             def compute(self, today, assets, out, returns_slice):
@@ -196,7 +202,7 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
         sma_slice = sma[my_asset]
 
         class UsesSlicedInput(CustomFactor):
-            window_length = 1
+            window_length = 2
             inputs = [sma_slice]
 
             def compute(self, today, assets, out, sma_slice):
@@ -211,7 +217,7 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
 
         # Make sure that slices of custom factors are not window safe.
         class MyUnsafeFactor(CustomFactor):
-            window_length = 1
+            window_length = 2
             inputs = [col]
 
             def compute(self, today, assets, out, col):
@@ -221,7 +227,7 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
         my_unsafe_factor_slice = my_unsafe_factor[my_asset]
 
         class UsesSlicedInput(CustomFactor):
-            window_length = 1
+            window_length = 2
             inputs = [my_unsafe_factor_slice]
 
             def compute(self, today, assets, out, my_unsafe_factor_slice):
@@ -236,7 +242,7 @@ class SliceTestCase(WithSeededRandomPipelineEngine, ZiplineTestCase):
 
         # Create a window safe factor.
         class MySafeFactor(CustomFactor):
-            window_length = 1
+            window_length = 2
             inputs = [col]
             window_safe = True
 

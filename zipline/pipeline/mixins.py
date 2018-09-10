@@ -144,7 +144,11 @@ class CustomTermMixin(object):
         """
         Override this method with a function that writes a value into `out`.
         """
-        raise NotImplementedError()
+        raise NotImplementedError(
+            "{name} must define a compute method".format(
+                name=type(self).__name__
+            )
+        )
 
     def _allocate_output(self, windows, shape):
         """
@@ -215,7 +219,7 @@ class CustomTermMixin(object):
                 out[idx][out_mask] = out_row
         return out
 
-    def short_repr(self):
+    def graph_repr(self):
         """Short repr to use when rendering Pipeline graphs."""
         return type(self).__name__ + ':\l  window_length: %d\l' % \
             self.window_length
@@ -242,7 +246,7 @@ class LatestMixin(SingleInputMixin):
                 )
             )
 
-    def short_repr(self):
+    def graph_repr(self):
         return "Latest"
 
 
@@ -284,7 +288,7 @@ class AliasedMixin(SingleInputMixin):
             name=self.name,
         )
 
-    def short_repr(self):
+    def graph_repr(self):
         """Short repr to use when rendering Pipeline graphs."""
         return self.name
 

@@ -27,7 +27,6 @@ from pandas import (
     Series,
     Timestamp,
 )
-from pandas.tseries.tools import normalize_date
 from six import iteritems, itervalues
 from trading_calendars import get_calendar
 
@@ -44,7 +43,7 @@ from zipline.errors import (
 )
 from zipline.finance.trading import SimulationParameters
 from zipline.lib.adjustment import MULTIPLY
-from zipline.pipeline import Pipeline
+from zipline.pipeline import Pipeline, CustomFactor
 from zipline.pipeline.factors import VWAP
 from zipline.pipeline.data import USEquityPricing
 from zipline.pipeline.loaders.frame import DataFrameLoader
@@ -61,6 +60,7 @@ from zipline.testing.fixtures import (
     WithBcolzEquityDailyBarReaderFromCSVs,
     ZiplineTestCase,
 )
+from zipline.utils.pandas_utils import normalize_date
 
 TEST_RESOURCE_PATH = join(
     dirname(dirname(realpath(__file__))),  # zipline_repo/tests
@@ -104,24 +104,28 @@ class ClosesAndVolumes(WithMakeAlgo, ZiplineTestCase):
                 'symbol': 'A',
                 'start_date': cls.dates[10],
                 'end_date': cls.dates[13],
-                'exchange': 'TEST',
+                'exchange': 'NYSE',
             },
             {
                 'sid': 2,
                 'symbol': 'B',
                 'start_date': cls.dates[11],
                 'end_date': cls.dates[14],
-                'exchange': 'TEST',
+                'exchange': 'NYSE',
             },
             {
                 'sid': 3,
                 'symbol': 'C',
                 'start_date': cls.dates[12],
                 'end_date': cls.dates[15],
-                'exchange': 'TEST',
+                'exchange': 'NYSE',
             },
         ])
         return ret
+
+    @classmethod
+    def make_exchanges_info(cls, *args, **kwargs):
+        return DataFrame({'exchange': ['NYSE'], 'country_code': ['US']})
 
     @classmethod
     def make_equity_daily_bar_data(cls):
@@ -445,6 +449,8 @@ class PipelineAlgorithmTestCase(WithMakeAlgo,
     # environment.
     BENCHMARK_SID = None
 
+    ASSET_FINDER_COUNTRY_CODE = 'US'
+
     @classmethod
     def make_equity_daily_bar_data(cls):
         resources = {
@@ -512,7 +518,6 @@ class PipelineAlgorithmTestCase(WithMakeAlgo,
 
     def compute_expected_vwaps(self, window_lengths):
         AAPL, MSFT, BRK_A = self.AAPL, self.MSFT, self.BRK_A
-
         # Our view of the data before AAPL's split on June 9, 2014.
         raw = {k: v.copy() for k, v in iteritems(self.raw_data)}
 
@@ -704,7 +709,7 @@ class PipelineAlgorithmTestCase(WithMakeAlgo,
         count = [0]
 
         current_day = self.trading_calendar.next_session_label(
-            self.pipeline_loader.raw_price_loader.last_available_dt,
+            self.pipeline_loader.raw_price_reader.last_available_dt,
         )
 
         def initialize(context):
@@ -738,3 +743,49 @@ class PipelineAlgorithmTestCase(WithMakeAlgo,
         )
 
         self.assertTrue(count[0] > 0)
+
+
+class PipelineSequenceTestCase(WithMakeAlgo, ZiplineTestCase):
+
+    # run algorithm for 3 days
+    START_DATE = pd.Timestamp('2014-12-29', tz='utc')
+    END_DATE = pd.Timestamp('2014-12-31', tz='utc')
+    ASSET_FINDER_COUNTRY_CODE = 'US'
+
+    def get_pipeline_loader(self):
+        raise AssertionError("Loading terms for pipeline with no inputs")
+
+    def test_pipeline_compute_before_bts(self):
+
+        # for storing and keeping track of calls to BTS and TestFactor.compute
+        trace = []
+
+        class TestFactor(CustomFactor):
+            inputs = ()
+
+            # window_length doesn't actually matter for this test case
+            window_length = 1
+
+            def compute(self, today, assets, out):
+                trace.append("CustomFactor call")
+
+        def initialize(context):
+            pipeline = attach_pipeline(Pipeline(), 'my_pipeline')
+            test_factor = TestFactor()
+            pipeline.add(test_factor, 'test_factor')
+
+        def before_trading_start(context, data):
+            trace.append("BTS call")
+            pipeline_output('my_pipeline')
+
+        self.run_algorithm(
+            initialize=initialize,
+            before_trading_start=before_trading_start,
+            get_pipeline_loader=self.get_pipeline_loader,
+        )
+
+        # All pipeline computation calls should occur before any BTS calls,
+        # and the algorithm is being run for 3 days, so the first 3 calls
+        # should be to the custom factor and the next 3 calls should be to BTS
+        expected_result = ["CustomFactor call"] * 3 + ["BTS call"] * 3
+        self.assertEqual(trace, expected_result)

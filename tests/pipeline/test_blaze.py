@@ -6,6 +6,7 @@ from __future__ import division
 from collections import OrderedDict
 from datetime import timedelta, time
 from itertools import product, chain
+from unittest import skipIf
 import warnings
 
 import blaze as bz
@@ -15,7 +16,6 @@ import numpy as np
 from numpy.testing.utils import assert_array_almost_equal
 from odo import odo
 import pandas as pd
-from pandas.util.testing import assert_frame_equal
 from toolz import keymap, valmap, concatv
 from toolz.curried import operator as op
 
@@ -23,6 +23,7 @@ from zipline.assets.synthetic import make_simple_equity_info
 from zipline.errors import UnsupportedPipelineOutput
 from zipline.pipeline import Pipeline, CustomFactor
 from zipline.pipeline.data import DataSet, BoundColumn, Column
+from zipline.pipeline.domain import EquitySessionDomain
 from zipline.pipeline.engine import SimplePipelineEngine
 from zipline.pipeline.loaders.blaze import (
     from_blaze,
@@ -39,10 +40,14 @@ from zipline.testing import (
     tmp_asset_finder,
 )
 from zipline.testing.fixtures import WithAssetFinder
-from zipline.testing.predicates import assert_equal, assert_isidentical
+from zipline.testing.predicates import (
+    assert_equal,
+    assert_frame_equal,
+    assert_isidentical,
+)
 from zipline.utils.numpy_utils import float64_dtype, int64_dtype
-from zipline.utils.pandas_utils import empty_dataframe
-
+from zipline.utils.pandas_utils import empty_dataframe, new_pandas, \
+    skip_pipeline_new_pandas
 
 nameof = op.attrgetter('name')
 dtypeof = op.attrgetter('dtype')
@@ -125,6 +130,12 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             asof_date: datetime,
             timestamp: datetime,
         }""")
+
+    def create_domain(self, sessions):
+        return EquitySessionDomain(
+            sessions,
+            country_code=self.ASSET_FINDER_COUNTRY_CODE,
+        )
 
     def test_tabular(self):
         name = 'expr'
@@ -425,6 +436,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             NonPipelineField,
         )
 
+    @skipIf(new_pandas, skip_pipeline_new_pandas)
     def test_cols_with_all_missing_vals(self):
         """
         Tests that when there is no known data, we get output where the
@@ -555,6 +567,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
              'dt_value'),
         )
 
+    @skipIf(new_pandas, skip_pipeline_new_pandas)
     def test_cols_with_some_missing_vals(self):
         """
         Tests the following:
@@ -611,6 +624,10 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             (self.ASSET_FINDER_EQUITY_SIDS[-1],) * 2,
             'float_value': (0., 1., 2., np.NaN),
             'str_value': ('a', 'b', 'c', None),
+            'cat_value': pd.Categorical(
+                values=['a', 'b', 'c', None],
+                categories=['a', 'b', 'c', None],
+            ),
             'int_value': (1, 2, 3, 0),
             'bool_value': (True, True, True, False),
             'dt_value': (pd.Timestamp('2011-01-01'),
@@ -628,6 +645,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
                  sid: int64,
                  float_value: float64,
                  str_value: string,
+                 cat_value: string,
                  int_value: int64,
                  bool_value: bool,
                  dt_value: datetime,
@@ -640,6 +658,10 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
         expected = pd.DataFrame(
             {
                 'str_value': np.array(
+                    ['a', None, 'c', 'a', None, 'c', 'a', 'b', 'c'],
+                    dtype='object',
+                ),
+                'cat_value': np.array(
                     ['a', None, 'c', 'a', None, 'c', 'a', 'b', 'c'],
                     dtype='object',
                 ),
@@ -669,6 +691,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             },
             columns=[
                 'str_value',
+                'cat_value',
                 'float_value',
                 'int_value',
                 'bool_value',
@@ -758,22 +781,22 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
     def _test_id(self, df, dshape, expected, finder, add):
         expr = bz.data(df, name='expr', dshape=dshape)
         loader = BlazeLoader()
+        domain = self.create_domain(self.dates)
         ds = from_blaze(
             expr,
             loader=loader,
             no_deltas_rule='ignore',
             no_checkpoints_rule='ignore',
             missing_values=self.missing_values,
+            domain=domain
         )
-        p = Pipeline()
+        p = Pipeline(domain=domain)
         for a in add:
             p.add(getattr(ds, a).latest, a)
         dates = self.dates
 
         result = SimplePipelineEngine(
-            loader,
-            dates,
-            finder,
+            loader, finder,
         ).run_pipeline(p, dates[0], dates[-1])
         assert_frame_equal(
             result.sort_index(axis=1),
@@ -786,15 +809,17 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             dates = self.dates
         expr = bz.data(df, name='expr', dshape=dshape)
         loader = BlazeLoader()
+        domain = self.create_domain(dates)
         ds = from_blaze(
             expr,
             loader=loader,
             no_deltas_rule='ignore',
             no_checkpoints_rule='ignore',
             missing_values=self.missing_values,
+            domain=domain,
         )
 
-        p = Pipeline()
+        p = Pipeline(domain=domain)
         macro_inputs = []
         for column_name in add:
             column = getattr(ds, column_name)
@@ -818,7 +843,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
         # expected macro data are made in the `compute` function of our custom
         # factor above.
         p.add(UsesMacroInputs(), 'uses_macro_inputs')
-        engine = SimplePipelineEngine(loader, dates, finder)
+        engine = SimplePipelineEngine(loader, finder)
         engine.run_pipeline(p, dates[0], dates[-1])
 
     def test_custom_query_time_tz(self):
@@ -861,17 +886,15 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             no_deltas_rule='ignore',
             no_checkpoints_rule='ignore',
             missing_values=self.missing_values,
+            domain=self.create_domain(self.dates),
         )
         p = Pipeline()
         p.add(ds.value.latest, 'value')
         p.add(ds.int_value.latest, 'int_value')
-        dates = self.dates
 
         result = SimplePipelineEngine(
-            loader,
-            dates,
-            self.asset_finder,
-        ).run_pipeline(p, dates[0], dates[-1])
+            loader, self.asset_finder,
+        ).run_pipeline(p, self.dates[0], self.dates[-1])
 
         expected = df.drop('asof_date', axis=1)
         expected['timestamp'] = expected['timestamp'].dt.normalize().astype(
@@ -1292,6 +1315,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
             no_deltas_rule='raise',
             no_checkpoints_rule='ignore',
             missing_values=self.missing_values,
+            domain=self.create_domain(calendar),
         )
         p = Pipeline()
 
@@ -1322,9 +1346,7 @@ class BlazeToPipelineTestCase(WithAssetFinder, ZiplineTestCase):
         p.add(TestFactor(), 'value')
 
         result = SimplePipelineEngine(
-            loader,
-            calendar,
-            finder,
+            loader, finder,
         ).run_pipeline(p, start, end)
 
         if expected_output is not None:
