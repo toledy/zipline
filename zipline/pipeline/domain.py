@@ -14,16 +14,19 @@ Currently, this means that a domain defines two things:
    the future, we expect to expand this functionality to include more general
    concepts.
 """
+import datetime
 from textwrap import dedent
 
-from interface import implements, Interface
+from interface import default, implements, Interface
 import pandas as pd
+import pytz
 
 from trading_calendars import get_calendar
 
 from zipline.country import CountryCode
-from zipline.utils.input_validation import expect_types
+from zipline.utils.input_validation import expect_types, optional
 from zipline.utils.memoize import lazyval
+from zipline.utils.pandas_utils import days_at_time
 
 
 class IDomain(Interface):
@@ -51,6 +54,50 @@ class IDomain(Interface):
         code : str
             The two-character country iso3166 country code for this domain.
         """
+
+    def data_query_cutoff_for_sessions(self, sessions):
+        """Compute the data query cutoff time for the given sessions.
+
+        Parameters
+        ----------
+        sessions : pd.DatetimeIndex
+            The sessions to get the data query cutoff times for. This index
+            will contain all midnight UTC values.
+
+        Returns
+        -------
+        data_query_cutoff : pd.DatetimeIndex
+            Timestamp of the last minute for which data should be considered
+            "available" on each session.
+        """
+
+    @default
+    def roll_forward(self, dt):
+        """
+        Given a date, align it to the calendar of the pipeline's domain.
+
+        Parameters
+        ----------
+        dt : pd.Timestamp
+
+        Returns
+        -------
+        pd.Timestamp
+        """
+        dt = pd.Timestamp(dt, tz='UTC')
+
+        trading_days = self.all_sessions()
+        try:
+            return trading_days[trading_days.searchsorted(dt)]
+        except IndexError:
+            raise ValueError(
+                "Date {} was past the last session for domain {}. "
+                "The last session for this domain is {}.".format(
+                    dt.date(),
+                    self,
+                    trading_days[-1].date()
+                )
+            )
 
 
 Domain = implements(IDomain)
@@ -83,6 +130,11 @@ class GenericDomain(Domain):
     def country_code(self):
         raise NotImplementedError("Can't get country code for generic domain.")
 
+    def data_query_cutoff_for_sessions(self, sessions):
+        raise NotImplementedError(
+            "Can't compute data query cutoff times for generic domain.",
+        )
+
     def __repr__(self):
         return "GENERIC"
 
@@ -100,36 +152,119 @@ class EquityCalendarDomain(Domain):
         ISO-3166 two-letter country code of the domain
     calendar_name : str
         Name of the calendar, to be looked by by trading_calendar.get_calendar.
+    data_query_offset : datetime.timedelta
+         The offset from market open when data should no longer be considered
+         available for a session. For example, a ``data_query_offset`` of
+         ``-datetime.timedelta(minutes=45)`` means that the data must have
+         been available at least 45 minutes prior to market open for it to
+         appear in the pipeline input for the given session.
     """
     @expect_types(
         country_code=str,
         calendar_name=str,
         __funcname='EquityCountryDomain',
     )
-    def __init__(self, country_code, calendar_name):
+    def __init__(self,
+                 country_code,
+                 calendar_name,
+                 data_query_offset=-datetime.timedelta(minutes=45)):
         self._country_code = country_code
-        self._calendar_name = calendar_name
+        self.calendar_name = calendar_name
+        self._data_query_offset = (
+            # add one minute because `open_time` is actually the open minute
+            # label which is one minute _after_ market open...
+            data_query_offset - datetime.timedelta(minutes=1)
+        )
+        if data_query_offset >= datetime.timedelta(0):
+            raise ValueError(
+                'data must be ready before market open (offset must be < 0)',
+            )
 
     @property
     def country_code(self):
         return self._country_code
 
+    @lazyval
+    def calendar(self):
+        return get_calendar(self.calendar_name)
+
     def all_sessions(self):
         return self.calendar.all_sessions
 
-    @lazyval
-    def calendar(self):
-        return get_calendar(self._calendar_name)
+    def data_query_cutoff_for_sessions(self, sessions):
+        opens = self.calendar.opens.loc[sessions]
+        missing_mask = pd.isnull(opens)
+        if missing_mask.any():
+            missing_days = sessions[missing_mask.values]
+            raise ValueError(
+                'cannot resolve data query time for sessions that are not on'
+                ' the %s calendar:\n%s' % (
+                    self.calendar.name,
+                    missing_days,
+                ),
+            )
+
+        return pd.DatetimeIndex(opens + self._data_query_offset, tz='UTC')
 
     def __repr__(self):
         return "EquityCalendarDomain({!r}, {!r})".format(
-            self.country_code, self._calendar_name,
+            self.country_code, self.calendar_name,
         )
 
 
-US_EQUITIES = EquityCalendarDomain(CountryCode.UNITED_STATES, 'NYSE')
-CA_EQUITIES = EquityCalendarDomain(CountryCode.CANADA, 'TSX')
-GB_EQUITIES = EquityCalendarDomain(CountryCode.UNITED_KINGDOM, 'LSE')
+AT_EQUITIES = EquityCalendarDomain(CountryCode.AUSTRIA, 'XWBO')
+AU_EQUITIES = EquityCalendarDomain(CountryCode.AUSTRALIA, 'XASX')
+BE_EQUITIES = EquityCalendarDomain(CountryCode.BELGIUM, 'XBRU')
+BR_EQUITIES = EquityCalendarDomain(CountryCode.BRAZIL, 'BVMF')
+CA_EQUITIES = EquityCalendarDomain(CountryCode.CANADA, 'XTSE')
+CH_EQUITIES = EquityCalendarDomain(CountryCode.SWITZERLAND, 'XSWX')
+CN_EQUITIES = EquityCalendarDomain(CountryCode.CHINA, 'XSHG')
+DE_EQUITIES = EquityCalendarDomain(CountryCode.GERMANY, 'XFRA')
+DK_EQUITIES = EquityCalendarDomain(CountryCode.DENMARK, 'XCSE')
+ES_EQUITIES = EquityCalendarDomain(CountryCode.SPAIN, 'XMAD')
+FI_EQUITIES = EquityCalendarDomain(CountryCode.FINLAND, 'XHEL')
+FR_EQUITIES = EquityCalendarDomain(CountryCode.FRANCE, 'XPAR')
+GB_EQUITIES = EquityCalendarDomain(CountryCode.UNITED_KINGDOM, 'XLON')
+HK_EQUITIES = EquityCalendarDomain(CountryCode.HONG_KONG, 'XHKG')
+IE_EQUITIES = EquityCalendarDomain(CountryCode.IRELAND, 'XDUB')
+IN_EQUITIES = EquityCalendarDomain(CountryCode.INDIA, "XBOM")
+IT_EQUITIES = EquityCalendarDomain(CountryCode.ITALY, 'XMIL')
+JP_EQUITIES = EquityCalendarDomain(CountryCode.JAPAN, 'XTKS')
+NL_EQUITIES = EquityCalendarDomain(CountryCode.NETHERLANDS, 'XAMS')
+NO_EQUITIES = EquityCalendarDomain(CountryCode.NORWAY, 'XOSL')
+NZ_EQUITIES = EquityCalendarDomain(CountryCode.NEW_ZEALAND, 'XNZE')
+PT_EQUITIES = EquityCalendarDomain(CountryCode.PORTUGAL, 'XLIS')
+SE_EQUITIES = EquityCalendarDomain(CountryCode.SWEDEN, 'XSTO')
+SG_EQUITIES = EquityCalendarDomain(CountryCode.SINGAPORE, 'XSES')
+US_EQUITIES = EquityCalendarDomain(CountryCode.UNITED_STATES, 'XNYS')
+
+BUILT_IN_DOMAINS = [
+    AT_EQUITIES,
+    AU_EQUITIES,
+    BE_EQUITIES,
+    BR_EQUITIES,
+    CA_EQUITIES,
+    CH_EQUITIES,
+    CN_EQUITIES,
+    DE_EQUITIES,
+    DK_EQUITIES,
+    ES_EQUITIES,
+    FI_EQUITIES,
+    FR_EQUITIES,
+    GB_EQUITIES,
+    HK_EQUITIES,
+    IE_EQUITIES,
+    IN_EQUITIES,
+    IT_EQUITIES,
+    JP_EQUITIES,
+    NL_EQUITIES,
+    NO_EQUITIES,
+    NZ_EQUITIES,
+    PT_EQUITIES,
+    SE_EQUITIES,
+    SG_EQUITIES,
+    US_EQUITIES,
+]
 
 
 def infer_domain(terms):
@@ -211,15 +346,37 @@ class EquitySessionDomain(Domain):
         Sessions to use as output labels for pipelines run on this domain.
     country_code : str
         ISO 3166 country code of equities to be used with this domain.
+    data_query_time : datetime.time, optional
+        The time of day when data should no longer be considered available for
+        a session.
+    data_query_date_offset : int, optional
+        The number of days to add to the session label before applying the
+        ``data_query_time``. This can be used to express that the cutoff time
+        for a session falls on a different calendar day from the session label.
     """
     @expect_types(
         sessions=pd.DatetimeIndex,
         country_code=str,
+        data_query_time=optional(datetime.time),
+        data_query_date_offset=int,
         __funcname='EquitySessionDomain',
     )
-    def __init__(self, sessions, country_code):
+    def __init__(self,
+                 sessions,
+                 country_code,
+                 data_query_time=None,
+                 data_query_date_offset=0):
         self._country_code = country_code
         self._sessions = sessions
+
+        if data_query_time is None:
+            data_query_time = datetime.time(0, 0, tzinfo=pytz.timezone('UTC'))
+
+        if data_query_time.tzinfo is None:
+            raise ValueError("data_query_time cannot be tz-naive")
+
+        self._data_query_time = data_query_time
+        self._data_query_date_offset = data_query_date_offset
 
     @property
     def country_code(self):
@@ -227,3 +384,11 @@ class EquitySessionDomain(Domain):
 
     def all_sessions(self):
         return self._sessions
+
+    def data_query_cutoff_for_sessions(self, sessions):
+        return days_at_time(
+            sessions,
+            self._data_query_time,
+            self._data_query_time.tzinfo,
+            self._data_query_date_offset,
+        )
