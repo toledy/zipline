@@ -893,7 +893,7 @@ class SubTestFailures(AssertionError):
             '\n    '.join((
                 ', '.join('%s=%r' % item for item in scope.items()),
                 self._format_exc(exc_info),
-            )) for scope, exc_info in self.failures,
+            )) for scope, exc_info in self.failures
         )
 
 
@@ -1194,7 +1194,7 @@ def parameter_space(__fail_fast=_FAIL_FAST_DEFAULT, **params):
         if unspecified:
             raise AssertionError(
                 "Function arguments %s were not "
-                "supplied to parameter_space()." % extra
+                "supplied to parameter_space()." % unspecified
             )
 
         def make_param_sets():
@@ -1451,7 +1451,7 @@ class _TmpBarReader(with_metaclass(ABCMeta, tmp_dir)):
                 self._data,
             )
             return self._reader_cls(tmpdir.path)
-        except:
+        except BaseException:  # Clean up even on KeyboardInterrupt
             self.__exit__(None, None, None)
             raise
 

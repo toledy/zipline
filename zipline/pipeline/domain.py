@@ -18,12 +18,14 @@ import datetime
 from textwrap import dedent
 
 from interface import default, implements, Interface
+import numpy as np
 import pandas as pd
 import pytz
 
 from trading_calendars import get_calendar
 
 from zipline.country import CountryCode
+from zipline.utils.formatting import bulleted_list
 from zipline.utils.input_validation import expect_types, optional
 from zipline.utils.memoize import lazyval
 from zipline.utils.pandas_utils import days_at_time
@@ -152,10 +154,10 @@ class EquityCalendarDomain(Domain):
         ISO-3166 two-letter country code of the domain
     calendar_name : str
         Name of the calendar, to be looked by by trading_calendar.get_calendar.
-    data_query_offset : datetime.timedelta
+    data_query_offset : np.timedelta64
          The offset from market open when data should no longer be considered
          available for a session. For example, a ``data_query_offset`` of
-         ``-datetime.timedelta(minutes=45)`` means that the data must have
+         ``-np.timedelta64(45, 'm')`` means that the data must have
          been available at least 45 minutes prior to market open for it to
          appear in the pipeline input for the given session.
     """
@@ -167,13 +169,13 @@ class EquityCalendarDomain(Domain):
     def __init__(self,
                  country_code,
                  calendar_name,
-                 data_query_offset=-datetime.timedelta(minutes=45)):
+                 data_query_offset=-np.timedelta64(45, 'm')):
         self._country_code = country_code
         self.calendar_name = calendar_name
         self._data_query_offset = (
             # add one minute because `open_time` is actually the open minute
             # label which is one minute _after_ market open...
-            data_query_offset - datetime.timedelta(minutes=1)
+            data_query_offset - np.timedelta64(1, 'm')
         )
         if data_query_offset >= datetime.timedelta(0):
             raise ValueError(
@@ -192,10 +194,10 @@ class EquityCalendarDomain(Domain):
         return self.calendar.all_sessions
 
     def data_query_cutoff_for_sessions(self, sessions):
-        opens = self.calendar.opens.loc[sessions]
+        opens = self.calendar.opens.loc[sessions].values
         missing_mask = pd.isnull(opens)
         if missing_mask.any():
-            missing_days = sessions[missing_mask.values]
+            missing_days = sessions[missing_mask]
             raise ValueError(
                 'cannot resolve data query time for sessions that are not on'
                 ' the %s calendar:\n%s' % (
@@ -230,6 +232,7 @@ IE_EQUITIES = EquityCalendarDomain(CountryCode.IRELAND, 'XDUB')
 IN_EQUITIES = EquityCalendarDomain(CountryCode.INDIA, "XBOM")
 IT_EQUITIES = EquityCalendarDomain(CountryCode.ITALY, 'XMIL')
 JP_EQUITIES = EquityCalendarDomain(CountryCode.JAPAN, 'XTKS')
+KR_EQUITIES = EquityCalendarDomain(CountryCode.SOUTH_KOREA, 'XKRX')
 NL_EQUITIES = EquityCalendarDomain(CountryCode.NETHERLANDS, 'XAMS')
 NO_EQUITIES = EquityCalendarDomain(CountryCode.NORWAY, 'XOSL')
 NZ_EQUITIES = EquityCalendarDomain(CountryCode.NEW_ZEALAND, 'XNZE')
@@ -257,6 +260,7 @@ BUILT_IN_DOMAINS = [
     IN_EQUITIES,
     IT_EQUITIES,
     JP_EQUITIES,
+    KR_EQUITIES,
     NL_EQUITIES,
     NO_EQUITIES,
     NZ_EQUITIES,
@@ -310,12 +314,6 @@ def infer_domain(terms):
         raise AmbiguousDomain(sorted(domains, key=repr))
 
 
-def bulleted_list(items):
-    """Format a bulleted list of values.
-    """
-    return "\n".join(map("  - {}".format, items))
-
-
 # This would be better if we provided more context for which domains came from
 # which terms.
 class AmbiguousDomain(Exception):
@@ -332,7 +330,9 @@ class AmbiguousDomain(Exception):
         self.domains = domains
 
     def __str__(self):
-        return self._TEMPLATE.format(domains=bulleted_list(self.domains))
+        return self._TEMPLATE.format(
+            domains=bulleted_list(self.domains, indent=2),
+        )
 
 
 class EquitySessionDomain(Domain):

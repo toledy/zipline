@@ -1,10 +1,14 @@
+import abc
+from collections import OrderedDict
 from functools import total_ordering
+from itertools import repeat
+from textwrap import dedent
+from weakref import WeakKeyDictionary
+
 from six import (
     iteritems,
     with_metaclass,
 )
-from weakref import WeakKeyDictionary
-
 from toolz import first
 
 from zipline.pipeline.classifiers import Classifier, Latest as LatestClassifier
@@ -17,6 +21,7 @@ from zipline.pipeline.term import (
     LoadableTerm,
     validate_dtype,
 )
+from zipline.utils.formatting import s, plural
 from zipline.utils.input_validation import ensure_dtype, expect_types
 from zipline.utils.numpy_utils import NoDefaultMissingValue
 from zipline.utils.preprocess import preprocess
@@ -247,7 +252,8 @@ class BoundColumn(LoadableTerm):
 
     def graph_repr(self):
         """Short repr to use when rendering Pipeline graphs."""
-        return "BoundColumn:\l  Dataset: {}\l  Column: {}\l".format(
+        # Graphviz interprets `\l` as "divide label into lines, left-justified"
+        return "BoundColumn:\\l  Dataset: {}\\l  Column: {}\\l".format(
             self.dataset.__name__,
             self.name
         )
@@ -497,3 +503,297 @@ class DataSet(with_metaclass(DataSetMeta, object)):
 # base DataSet class, and we also don't want to accidentally use a shared
 # version of this attribute if we fail to set this in a subclass somewhere.
 del DataSet._domain_specializations
+
+
+class AccessedOnMultiDimensionalDataSet(AttributeError):
+    """Exception thrown when a column is accessed on a MultiDimensionalDataSet
+    instead of on the result of a slice.
+
+    Parameters
+    ----------
+    dataset_name : str
+        The name of the MultiDimensionalDataSet.
+    column_names : str
+        The name of the column accessed.
+    """
+    def __init__(self, dataset_name, column_name):
+        self.dataset_name = dataset_name
+        self.column_name = column_name
+
+    def __str__(self):
+        # NOTE: when ``aggregate`` is added, remember to update this message
+        return dedent(
+            """\
+            Attempted to access column {c} from multi-dimensional dataset {d}:
+
+            To work with multi-dimensional datasets, you must first choose a
+            slice using the ``slice`` method:
+
+                {d}.slice(...).{c}
+            """.format(c=self.column_name, d=self.dataset_name)
+        )
+
+
+class _MultiDimensionalDataSetColumn(object):
+    """Descriptor used to raise a helpful error when a column is accessed on a
+    MultiDimensionalDataSet instead of on the result of a slice.
+
+    Parameters
+    ----------
+    column_names : str
+        The name of the column.
+    """
+    def __init__(self, column_name):
+        self.column_name = column_name
+
+    def __get__(self, instance, owner):
+        raise AccessedOnMultiDimensionalDataSet(
+            owner.__name__,
+            self.column_name,
+        )
+
+
+class MultiDimensionalDataSetMeta(abc.ABCMeta):
+    _base_marker = object()
+
+    def __new__(cls, name, bases, dict_):
+        columns = {}
+        for k, v in dict_.items():
+            if isinstance(v, Column):
+                # capture all the columns off the MultiDimensionalDataSet class
+                # and replace them with a descriptor that will raise a helpful
+                # error message. The columns will get added to the BaseSlice
+                # for this type.
+                columns[k] = v
+                dict_[k] = _MultiDimensionalDataSetColumn(k)
+
+        is_base_class = bases == (cls._base_marker,)
+        if is_base_class:
+            bases = (object,)
+        self = super(MultiDimensionalDataSetMeta, cls).__new__(
+            cls,
+            name,
+            bases,
+            dict_,
+        )
+
+        if not is_base_class:
+            self.extra_dims = extra_dims = OrderedDict([
+                (k, frozenset(v))
+                for k, v in OrderedDict(self.extra_dims).items()
+            ])
+            if not extra_dims:
+                raise ValueError(
+                    'MultiDimensionalDataSet must be defined with non-empty'
+                    ' extra_dims',
+                )
+
+            class BaseSlice(self._SliceType):
+                parent_multidimensional_dataset = self
+
+                ndim = self.slice_ndim
+                domain = self.domain
+
+                locals().update(columns)
+
+            BaseSlice.__name__ = '%sBaseSlice' % self.__name__
+            self._SliceType = BaseSlice
+
+        # each type gets a unique cache
+        self._slice_cache = {}
+        return self
+
+    def __repr__(self):
+        return '<MultiDimensionalDataSet: %r, extra_dims=%r>' % (
+            self.__name__,
+            list(self.extra_dims),
+        )
+
+
+_base = with_metaclass(
+    MultiDimensionalDataSetMeta,
+    MultiDimensionalDataSetMeta._base_marker,
+)
+
+
+class MultiDimensionalDataSetSlice(DataSet):
+    """Marker type for slices of a
+    :class:`zipline.pipeline.data.dataset.MultiDimensionalDataSet` objects
+    """
+
+
+class MultiDimensionalDataSet(_base):
+    """
+    Base class for Pipeline multi-dimensional datasets.
+
+    A multi-dimensional dataset represents data where the unique identifier for
+    a particular value requires more than asset and date coordinates. A
+    multi-dimensional dataset may be thought of as a collection of
+    :class:`~zipline.pipeline.data.DataSet` objects with the same columns,
+    domain, and ndim.
+
+    ``MultiDimensionalDataSet`` objects have an extra field called the
+    ``extra_dims``. The ``extra_dims`` field describes the coords that are not
+    asset or date. The ``extra_dims`` are represented as an ordered dictionary
+    where the keys are the dimension name, and the values are a set of unique
+    values along that dimension.
+
+    To use a ``MultiDimensionalDataSet``, one must "fix" all of the extra
+    dimensions. The
+    :meth:`~zipline.pipeline.data.dataset.MultiDimensionalDataSet.slice` method
+    is used to create a dataset where all rows have the same values in the
+    extra dimensions. For example, given a ``MultiDimensionalDataSet``:
+
+    .. code-block:: python
+
+       class SomeDataSet(MultiDimensionalDataSet):
+           extra_dims = [
+               ('dimension_0', {'a', 'b', 'c'}),
+               ('dimension_1', {'d', 'e', 'f'}),
+           ]
+
+           column_0 = Column('f8')
+           column_1 = Column('?')
+
+    This dataset might represent a table with the following columns:
+
+    ::
+
+      sid :: int64
+      asof_date :: datetime64[ns]
+      timestamp :: datetime64[ns]
+      dimension_0 :: str
+      dimension_1 :: str
+      column_0 :: float64
+      column_1 :: bool
+
+    Here we see the implicit ``sid``, ``asof_date`` and ``timestamp`` columns
+    as well as the extra dimensions columns.
+
+    This ``MultiDimensionalDataSet`` can be converted to a regular ``DataSet``
+    with:
+
+    .. code-block:: python
+
+       DataSetSlice = SomeDataSet.slice(dimension_0='a', dimension_1='e')
+
+    This sliced dataset represents the rows from the higher dimensional dataset
+    where ``(dimension_0 == 'a') & (dimension_1 == 'e')``.
+    """
+    domain = GENERIC
+    slice_ndim = 2
+
+    _SliceType = MultiDimensionalDataSetSlice
+
+    @type.__call__
+    class extra_dims(object):
+        __isabstractmethod__ = True
+
+        def __get__(self, instance, owner):
+            return []
+
+    @classmethod
+    def _canonical_key(cls, args, kwargs):
+        extra_dims = cls.extra_dims
+        dimensions_set = set(extra_dims)
+        if not set(kwargs) <= dimensions_set:
+            extra = sorted(set(kwargs) - dimensions_set)
+            raise TypeError(
+                '%s does not have the following %s: %s\n'
+                'Valid dimensions are: %s' % (
+                    cls.__name__,
+                    s('dimension', extra),
+                    ', '.join(extra),
+                    ', '.join(extra_dims),
+                ),
+            )
+
+        if len(args) > len(extra_dims):
+            raise TypeError(
+                '%s has %d extra %s but %d %s given' % (
+                    cls.__name__,
+                    len(extra_dims),
+                    s('dimension', extra_dims),
+                    len(args),
+                    plural('was', 'were', args),
+                ),
+            )
+
+        missing = object()
+        coords = OrderedDict(zip(extra_dims, repeat(missing)))
+        to_add = dict(zip(extra_dims, args))
+        coords.update(to_add)
+        added = set(to_add)
+
+        for key, value in kwargs.items():
+            if key in added:
+                raise TypeError(
+                    '%s got multiple values for dimension %r' % (
+                        cls.__name__,
+                        coords,
+                    ),
+                )
+            coords[key] = value
+            added.add(key)
+
+        missing = {k for k, v in coords.items() if v is missing}
+        if missing:
+            missing = sorted(missing)
+            raise TypeError(
+                'no coordinate provided to %s for the following %s: %s' % (
+                    cls.__name__,
+                    s('dimension', missing),
+                    ', '.join(missing),
+                ),
+            )
+
+        # validate that all of the provided values exist along their given
+        # dimensions
+        for key, value in coords.items():
+            if value not in cls.extra_dims[key]:
+                raise ValueError(
+                    '%r is not a value along the %s dimension of %s' % (
+                        value,
+                        key,
+                        cls.__name__,
+                    ),
+                )
+
+        return coords, tuple(coords.items())
+
+    @classmethod
+    def slice(cls, *args, **kwargs):
+        """Take a slice of a multi-dimensional dataset to produce a dataset
+        indexed by asset and date.
+
+        Parameters
+        ----------
+        *args
+        **kwargs
+            The coordinates to fix along each extra dimension.
+
+        Returns
+        -------
+        dataset : DataSet
+            A regular pipeline dataset indexed by asset and date.
+
+        Notes
+        -----
+        The extra dimensions coords used to produce the result are available
+        under the ``extra_coords`` attribute.
+        """
+        coords, hash_key = cls._canonical_key(args, kwargs)
+        try:
+            return cls._slice_cache[hash_key]
+        except KeyError:
+            pass
+
+        class Slice(cls._SliceType):
+            extra_coords = coords
+
+        Slice.__name__ = '%s.slice(%s)' % (
+            cls.__name__,
+            ', '.join('%s=%r' % item for item in coords.items()),
+        )
+        cls._slice_cache[hash_key] = Slice
+        return Slice
